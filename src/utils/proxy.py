@@ -208,8 +208,8 @@ def handle_client(
         handle_http(client_socket, target_socket)
     except Exception as _e:
         print(
-            "[proxy.py:handle_client] Error in connection %s -> %s:%d"
-            % (_e, client_address[0], client_address[1])
+            "[proxy.py:handle_client] Error in connection %s:%d -> %s"
+            % (client_address[0], client_address[1], _e)
         )  # Log
 
 
