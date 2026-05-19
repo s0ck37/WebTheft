@@ -204,7 +204,13 @@ def handle_client(
 
     created_sockets.append(client_socket)
     created_sockets.append(target_socket)
-    handle_http(client_socket, target_socket)
+    try:
+        handle_http(client_socket, target_socket)
+    except Exception as _e:
+        print(
+            "[proxy.py:handle_client] Error in connection %s -> %s:%d"
+            % (_e, client_address[0], client_address[1])
+        )  # Log
 
 
 # Loop function that accepts clients
