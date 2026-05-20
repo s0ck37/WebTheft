@@ -102,6 +102,7 @@ def handle_http(
             client_http.receive_data(client_raw_data)
 
             # Receive request
+            # request_chunks: list[bytes] = [] # Debug
             while True:
                 client_event = client_http.next_event()
 
@@ -152,7 +153,6 @@ def handle_http(
         server_raw_data: bytes
 
         response_done = False
-
         while not response_done:
             # Get server response initial data
             server_raw_data = server_socket.recv(4096)
@@ -164,6 +164,7 @@ def handle_http(
             server_http.receive_data(server_raw_data)
 
             # Receive response
+            # response_chunks: list[bytes] = []
             while True:
                 server_event = server_http.next_event()
 
@@ -249,6 +250,7 @@ def handle_client(
 def create_listening_socket(address: tuple[str, int], ssl: bool = False) -> None:
     global stop, created_sockets, created_threads
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind(address)
     server_socket.listen(20)
 

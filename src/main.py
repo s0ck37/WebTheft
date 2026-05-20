@@ -21,7 +21,7 @@ banner: str = r"""
 """
 
 target = (
-    "github.com",
+    "www.instagram.com",
     443,
     True,
 )
