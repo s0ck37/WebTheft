@@ -116,7 +116,6 @@ def modify_request(request: HttpRequest) -> HttpRequest:
         h for h in request.headers if h[0].lower() != b"upgrade-insecure-requests"
     ]
 
-    print(request.headers)
     return request
 
 
@@ -135,5 +134,4 @@ def modify_response(response: HttpResponse) -> HttpResponse:
         new_headers.append((key, value))
 
     response.headers = new_headers
-
     return response
