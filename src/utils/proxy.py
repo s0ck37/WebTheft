@@ -215,10 +215,10 @@ def handle_client(
 ) -> None:
     global target_host, target_port, target_ssl, created_sockets
 
-    print(
-        "[proxy.py:handle_client] New client connected -> %s:%d"
-        % (client_address[0], client_address[1])
-    )  # Log
+    # print(
+    #     "[proxy.py:handle_client] New client connected -> %s:%d"
+    #     % (client_address[0], client_address[1])
+    # )  # Log
 
     plain_socket: socket.socket = socket.create_connection((target_host, target_port))
     target_socket = socket.socket | ssl.SSLSocket
