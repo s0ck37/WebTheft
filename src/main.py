@@ -16,7 +16,7 @@ banner: str = r"""
                                                                   J88"                88>
                                                                   @%                  48
                                                                 :"                    '8
- WebTheft Forward intercepting proxy (MITM-capable design)
+ 🥷 WebTheft Forward intercepting proxy (MITM-capable design)
   ~ by s0ck37
 """
 
