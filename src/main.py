@@ -16,9 +16,17 @@ banner: str = r"""
                                                                   J88"                88>
                                                                   @%                  48
                                                                 :"                    '8
- WebTheft ~ by s0ck37
+ WebTheft Forward intercepting proxy (MITM-capable design)
+  ~ by s0ck37
 """
+
+target = (
+    "github.com",
+    443,
+    True,
+)
+
 print(banner)
 print("[main.py] Starting WebTheft")
-utils.proxy.start(("localhost", 80))
+utils.proxy.start(("localhost", 80), target)
 print("[main.py] WebTheft finished")
