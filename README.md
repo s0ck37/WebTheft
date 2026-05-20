@@ -1,4 +1,4 @@
-# WebTheft
+# 🥷 WebTheft
 
 A lightweight HTTP/1.1 forward intercepting proxy built in Python using `h11`, designed for traffic inspection, modification, and plugin-based request/response rewriting.
 
