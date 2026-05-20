@@ -76,6 +76,10 @@ plugins/github.com.443.py
 
 ### Plugin API
 
+An example plugin was created for users to use it like a template for their own plugins.  
+It has the basic functionality to make a simple web service work under the proxy.  
+Find it [here](/src/plugins/simpleplugin.example.443.py).  
+  
 Each plugin must define:
 
 ```python
@@ -111,8 +115,6 @@ class HttpResponse:
 
 * Rewrite `Host` header
 * Modify `Origin` / `Referer`
-* Extract credentials from POST requests
-* Log cookies and session data
 * Rewrite redirect locations
 
 ## 🛑 Stop Route
