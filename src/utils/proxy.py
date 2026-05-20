@@ -138,9 +138,10 @@ def handle_http(
         )
 
         modified_raw_request += _request_builder.send(_modified_request)
-        modified_raw_request += _request_builder.send(
-            h11.Data(data=modified_client_request.body)
-        )
+        if modified_client_request.body != b"":
+            modified_raw_request += _request_builder.send(
+                h11.Data(data=modified_client_request.body)
+            )
         modified_raw_request += _request_builder.send(h11.EndOfMessage())
 
         # Send modifed request to server
@@ -171,6 +172,9 @@ def handle_http(
                 if isinstance(server_event, h11.Response):
                     server_response.status_code = server_event.status_code
                     server_response.headers = list(server_event.headers)
+                    if client_request.method == b"HEAD":
+                        response_done = True
+                        break
                 elif isinstance(server_event, h11.Data):
                     server_response.body += server_event.data
                 elif isinstance(server_event, h11.EndOfMessage):
