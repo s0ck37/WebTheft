@@ -173,7 +173,10 @@ def handle_http(
                 if isinstance(server_event, h11.Response):
                     server_response.status_code = server_event.status_code
                     server_response.headers = list(server_event.headers)
-                    if client_request.method == b"HEAD":
+                    if (
+                        client_request.method == b"HEAD"
+                        or client_request.method == b"OPTIONS"
+                    ):
                         response_done = True
                         break
                 elif isinstance(server_event, h11.Data):
@@ -193,7 +196,6 @@ def handle_http(
             status_code=modified_server_response.status_code,
             headers=modified_server_response.headers,
         )
-
         modified_raw_response += _response_builder.send(_modified_response)
         modified_raw_response += _response_builder.send(
             h11.Data(data=modified_server_response.body)
@@ -237,13 +239,14 @@ def handle_client(
 
     created_sockets.append(client_socket)
     created_sockets.append(target_socket)
-    try:
-        handle_http(client_socket, target_socket)
-    except Exception as _e:
-        print(
-            "[proxy.py:handle_client] Error in connection %s:%d -> %s"
-            % (client_address[0], client_address[1], _e)
-        )  # Log
+    handle_http(client_socket, target_socket)
+    # try:
+    #     handle_http(client_socket, target_socket)
+    # except Exception as _e:
+    #     print(
+    #         "[proxy.py:handle_client] Error in connection %s:%d -> %s"
+    #         % (client_address[0], client_address[1], _e)
+    #     )  # Log
 
 
 # Loop function that accepts clients
@@ -254,6 +257,10 @@ def create_listening_socket(address: tuple[str, int], ssl: bool = False) -> None
     server_socket.bind(address)
     server_socket.listen(20)
 
+    print(
+        "[proxy.py:create_listening_socket] WebTheft access URL: http://%s:%d/"
+        % (address[0], address[1])
+    )  # Log
     print("[proxy.py:create_listening_socket] Waiting for incomning connections")  # Log
     while not stop:
         conn, addr = server_socket.accept()
