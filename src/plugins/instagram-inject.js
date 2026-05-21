@@ -31,26 +31,3 @@
     return originalOpen.call(this, method, url, async, user, password);
   };
 })();
-
-// Intercept XHR send for CORS modification
-(function () {
-  const originalSend = XMLHttpRequest.prototype.send;
-
-  XMLHttpRequest.prototype.send = function () {
-    if (this._isInstagram) {
-      originalSetRequestHeader.call(this, "access-control-allow-origin", "*");
-    }
-    return originalSend.apply(this, arguments);
-  };
-})();
-// Intercept redirection
-window.location.replace = function (...args) {
-  console.log("Intercepted location.replace call with:", args);
-  const url = args[0];
-
-  if (url && url.includes("www.instagram.com")) {
-    console.warn("Blocked redirect to:", url);
-    return;
-  }
-  return originalReplace.apply(window.location, args);
-};
